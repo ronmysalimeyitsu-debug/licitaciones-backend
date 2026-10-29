@@ -109,6 +109,24 @@ npm run dev
 npm start
 ```
 
+### 7. Ejecutar el frontend Expo
+En otra terminal, configura la URL pública de la API y arranca Expo:
+
+```bash
+cd frontend
+copy .env.example .env
+npm install
+npm start
+```
+
+Edita `frontend/.env` antes de iniciar Expo:
+
+* Expo Web o simulador iOS: `EXPO_PUBLIC_API_URL=http://localhost:3000`
+* Emulador Android: `EXPO_PUBLIC_API_URL=http://10.0.2.2:3000`
+* Expo Go en un teléfono: usa la IP local de la computadora, por ejemplo `http://192.168.1.50:3000`. El teléfono y la computadora deben estar en la misma red.
+
+La aplicación utiliza `/api/v1/auth` para registrarse e iniciar sesión, `/api/v1/licitations` para cargar oportunidades y `/api/v1/bids` para enviar y consultar postulaciones. Para Expo Web, `FRONTEND_ORIGINS` en el `.env` del backend debe incluir el origen que muestra Expo, por ejemplo `http://localhost:8081`.
+
 ---
 
 ## 📡 Endpoints de la API
