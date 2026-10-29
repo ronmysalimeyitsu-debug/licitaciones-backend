@@ -21,18 +21,48 @@ export async function apiRequest(path, { token, ...options } = {}) {
   try {
     response = await fetch(`${API_URL}/api/v1${path}`, { ...options, headers });
   } catch (error) {
-    throw new Error(`No se pudo conectar con la API en ${API_URL}. Verifica que el backend esté iniciado y que la URL sea accesible desde este dispositivo.`);
+    const err = new Error(`No se pudo conectar con el backend en ${API_URL}. Verifica que el servidor esté iniciado.`);
+    err.status = 0;
+    err.statusCode = 0;
+    err.type = 'NetworkConnectionError';
+    err.requestId = 'N/A';
+    err.displayMessage = `[RED / CONEXIÓN]: No se pudo contactar al backend en ${API_URL}.`;
+    throw err;
   }
 
   let payload;
   try {
     payload = await response.json();
   } catch (error) {
-    throw new Error(`La API respondió con un formato inesperado (HTTP ${response.status}).`);
+    const err = new Error(`El servidor respondió con un formato inesperado (HTTP ${response.status}).`);
+    err.status = response.status;
+    err.statusCode = response.status;
+    err.type = 'InvalidFormatError';
+    err.requestId = response.headers.get('x-request-id') || 'N/A';
+    err.displayMessage = `[HTTP ${response.status} InvalidFormat]: Respuesta no estructurada.`;
+    throw err;
   }
 
   if (!response.ok) {
-    throw new Error(payload.error?.message || payload.message || `La solicitud falló (HTTP ${response.status}).`);
+    const backendMessage = payload.error?.message || payload.message || `La solicitud falló (HTTP ${response.status}).`;
+    const backendType = payload.error?.type || (
+      response.status === 400 ? 'BadRequestError' :
+      response.status === 401 ? 'UnauthorizedError' :
+      response.status === 403 ? 'ForbiddenError' :
+      response.status === 404 ? 'NotFoundError' :
+      response.status === 409 ? 'ConflictError' :
+      response.status >= 500 ? 'InternalServerError' : 'HttpError'
+    );
+    const requestId = payload.error?.requestId || response.headers.get('x-request-id') || 'N/A';
+
+    const err = new Error(backendMessage);
+    err.status = response.status;
+    err.statusCode = response.status;
+    err.type = backendType;
+    err.requestId = requestId;
+    err.backendError = payload.error || null;
+    err.displayMessage = `[HTTP ${response.status} ${backendType}]: ${backendMessage}`;
+    throw err;
   }
 
   return payload.data;

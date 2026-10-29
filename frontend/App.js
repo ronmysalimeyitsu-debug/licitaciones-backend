@@ -17,6 +17,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { apiRequest, mapLicitation } from './src/services/api';
 import {
+  AlertCircle,
   ArrowLeft,
   BarChart3,
   BriefcaseBusiness,
@@ -44,37 +45,30 @@ function LoginScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [serverError, setServerError] = useState(null);
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Datos incompletos', 'Completa todos los campos para continuar.');
-      return;
-    }
+  const handleLogin = async (customEmail, customPassword) => {
+    const targetEmail = typeof customEmail === 'string' ? customEmail : email;
+    const targetPassword = typeof customPassword === 'string' ? customPassword : password;
 
-    if (!validateEmail(email)) {
-      Alert.alert('Correo inválido', 'Ingresa un correo corporativo válido.');
-      return;
-    }
-
-    if (!validatePassword(password)) {
-      Alert.alert('Contraseña débil', 'La contraseña debe tener al menos 6 caracteres.');
-      return;
-    }
-
-    if (rif && !validateRif(rif)) {
-      Alert.alert('RIF inválido', 'Ejemplo válido: J-00000000-9');
-      return;
-    }
-
+    setServerError(null);
     setIsChecking(true);
     try {
       const result = await apiRequest('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email: targetEmail, password: targetPassword }),
       });
 
       if (rif && result.company.rif.toUpperCase() !== rif.trim().toUpperCase()) {
-        throw new Error('El RIF ingresado no coincide con la empresa de esta cuenta.');
+        const mismatchErr = {
+          status: 400,
+          type: 'BadRequestError',
+          message: `El RIF ingresado (${rif}) no coincide con el RIF oficial de la cuenta (${result.company.rif}).`,
+          requestId: 'LOCAL-VALIDATION',
+        };
+        setServerError(mismatchErr);
+        Alert.alert('Error de validación (HTTP 400)', mismatchErr.message);
+        return;
       }
 
       navigation.replace('Home', {
@@ -84,7 +78,17 @@ function LoginScreen({ navigation }) {
         },
       });
     } catch (error) {
-      Alert.alert('No se pudo iniciar sesión', error.message);
+      const errObj = {
+        status: error.status || 500,
+        type: error.type || 'ServerError',
+        message: error.message || 'Error en la solicitud.',
+        requestId: error.requestId || 'N/A',
+      };
+      setServerError(errObj);
+      Alert.alert(
+        `Respuesta del Backend [HTTP ${errObj.status} ${errObj.type}]`,
+        `${errObj.message}\n\nTrazabilidad X-Request-ID: ${errObj.requestId}`
+      );
     } finally {
       setIsChecking(false);
     }
@@ -101,9 +105,23 @@ function LoginScreen({ navigation }) {
 
           <Text style={styles.eyebrow}>Acceso empresarial</Text>
           <Text style={styles.heroTitle}>Licitaciones VZLA</Text>
-          <Text style={styles.heroSubtitle}>Gestiona postulaciones públicas y privadas desde tu celular.</Text>
+          <Text style={styles.heroSubtitle}>Gestiona postulaciones públicas y privadas conectadas a PostgreSQL/Supabase.</Text>
 
           <View style={styles.formCard}>
+            {serverError && (
+              <View style={styles.serverErrorBox}>
+                <View style={styles.serverErrorHeader}>
+                  <AlertCircle size={18} color="#ef4444" />
+                  <Text style={styles.serverErrorBadge}>HTTP {serverError.status}</Text>
+                  <Text style={styles.serverErrorType}>{serverError.type}</Text>
+                </View>
+                <Text style={styles.serverErrorMessage}>{serverError.message}</Text>
+                {serverError.requestId && serverError.requestId !== 'N/A' && (
+                  <Text style={styles.serverErrorTrace}>X-Request-ID: {serverError.requestId}</Text>
+                )}
+              </View>
+            )}
+
             <Text style={styles.label}>Correo corporativo</Text>
             <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="empresa@correo.com" keyboardType="email-address" autoCapitalize="none" />
 
@@ -118,10 +136,27 @@ function LoginScreen({ navigation }) {
             <Text style={styles.label}>RIF</Text>
             <TextInput style={styles.input} value={rif} onChangeText={setRif} placeholder="J-00000000-9" autoCapitalize="characters" />
 
-            <Pressable style={[styles.primaryButton, isChecking && styles.primaryButtonDisabled]} onPress={handleLogin} disabled={isChecking}>
-              <Text style={styles.primaryButtonText}>{isChecking ? 'Validando...' : 'Iniciar sesión'}</Text>
+            <Pressable style={[styles.primaryButton, isChecking && styles.primaryButtonDisabled]} onPress={() => handleLogin()} disabled={isChecking}>
+              <Text style={styles.primaryButtonText}>{isChecking ? 'Validando en Backend...' : 'Iniciar sesión'}</Text>
             </Pressable>
-            <Pressable onPress={() => navigation.navigate('Register')}>
+
+            {/* Botones de demostración rápida para la exposición */}
+            <View style={styles.demoBox}>
+              <Text style={styles.demoBoxTitle}>🧪 Probar Respuestas HTTP del Backend:</Text>
+              <View style={styles.demoButtonsRow}>
+                <Pressable style={styles.demoButton} onPress={() => handleLogin('correo_invalido_sin_arroba', '123')}>
+                  <Text style={styles.demoButtonText}>Error 400 Bad Request</Text>
+                </Pressable>
+                <Pressable style={styles.demoButton} onPress={() => handleLogin('demo@empresa.com', 'clave_invalida')}>
+                  <Text style={styles.demoButtonText}>Error 401 Unauthorized</Text>
+                </Pressable>
+                <Pressable style={styles.demoButton} onPress={() => handleLogin('trigger500@error.com', '123456')}>
+                  <Text style={styles.demoButtonText}>Error 500 Server Error</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <Pressable onPress={() => { setServerError(null); navigation.navigate('Register'); }}>
               <Text style={styles.footerLink}>Crear cuenta de empresa</Text>
             </Pressable>
           </View>
@@ -138,41 +173,40 @@ function RegisterScreen({ navigation }) {
   const [telefono, setTelefono] = useState('');
   const [password, setPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
+  const [serverError, setServerError] = useState(null);
 
-  const handleRegister = async () => {
-    if (!razonSocial.trim() || !rif.trim() || !email.trim() || !password) {
-      Alert.alert('Datos incompletos', 'Completa razón social, RIF, correo y contraseña.');
-      return;
-    }
+  const handleRegister = async (customPayload) => {
+    const payload = customPayload || {
+      razonSocial,
+      rif,
+      email,
+      password,
+      telefono: telefono || undefined,
+    };
 
-    if (!validateRif(rif)) {
-      Alert.alert('RIF inválido', 'Ejemplo válido: J-00000000-9');
-      return;
-    }
-
-    if (!validateEmail(email) || !validatePassword(password)) {
-      Alert.alert('Datos inválidos', 'Verifica el correo y usa una contraseña de al menos 6 caracteres.');
-      return;
-    }
-
+    setServerError(null);
     setIsRegistering(true);
     try {
       const result = await apiRequest('/auth/register', {
         method: 'POST',
-        body: JSON.stringify({
-          razonSocial: razonSocial.trim(),
-          rif: rif.trim().toUpperCase(),
-          email: email.trim(),
-          password,
-          telefono: telefono.trim() || undefined,
-        }),
+        body: JSON.stringify(payload),
       });
 
       navigation.replace('Home', {
         session: { ...result.company, token: result.token },
       });
     } catch (error) {
-      Alert.alert('No se pudo crear la cuenta', error.message);
+      const errObj = {
+        status: error.status || 500,
+        type: error.type || 'ServerError',
+        message: error.message || 'Error en el registro.',
+        requestId: error.requestId || 'N/A',
+      };
+      setServerError(errObj);
+      Alert.alert(
+        `Respuesta del Backend [HTTP ${errObj.status} ${errObj.type}]`,
+        `${errObj.message}\n\nTrazabilidad X-Request-ID: ${errObj.requestId}`
+      );
     } finally {
       setIsRegistering(false);
     }
@@ -188,21 +222,64 @@ function RegisterScreen({ navigation }) {
           </View>
           <Text style={styles.eyebrow}>Registro empresarial</Text>
           <Text style={styles.heroTitle}>Crear cuenta</Text>
+          <Text style={styles.heroSubtitle}>Valida credenciales contra las reglas de dominio del backend.</Text>
+
           <View style={styles.formCard}>
+            {serverError && (
+              <View style={styles.serverErrorBox}>
+                <View style={styles.serverErrorHeader}>
+                  <AlertCircle size={18} color="#ef4444" />
+                  <Text style={styles.serverErrorBadge}>HTTP {serverError.status}</Text>
+                  <Text style={styles.serverErrorType}>{serverError.type}</Text>
+                </View>
+                <Text style={styles.serverErrorMessage}>{serverError.message}</Text>
+                {serverError.requestId && serverError.requestId !== 'N/A' && (
+                  <Text style={styles.serverErrorTrace}>X-Request-ID: {serverError.requestId}</Text>
+                )}
+              </View>
+            )}
+
             <Text style={styles.label}>Razón social</Text>
-            <TextInput style={styles.input} value={razonSocial} onChangeText={setRazonSocial} autoCapitalize="words" />
+            <TextInput style={styles.input} value={razonSocial} onChangeText={setRazonSocial} placeholder="Constructora Ejemplo C.A." autoCapitalize="words" />
             <Text style={styles.label}>RIF</Text>
-            <TextInput style={styles.input} value={rif} onChangeText={setRif} placeholder="J-00000000-9" autoCapitalize="characters" />
+            <TextInput style={styles.input} value={rif} onChangeText={setRif} placeholder="J-12345678-0" autoCapitalize="characters" />
             <Text style={styles.label}>Correo corporativo</Text>
-            <TextInput style={styles.input} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+            <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="contacto@empresa.com" keyboardType="email-address" autoCapitalize="none" />
             <Text style={styles.label}>Teléfono (opcional)</Text>
-            <TextInput style={styles.input} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" />
+            <TextInput style={styles.input} value={telefono} onChangeText={setTelefono} placeholder="+58 212 555-0100" keyboardType="phone-pad" />
             <Text style={styles.label}>Contraseña</Text>
-            <TextInput style={styles.input} value={password} onChangeText={setPassword} secureTextEntry />
-            <Pressable style={[styles.primaryButton, isRegistering && styles.primaryButtonDisabled]} onPress={handleRegister} disabled={isRegistering}>
-              <Text style={styles.primaryButtonText}>{isRegistering ? 'Creando cuenta...' : 'Registrarme'}</Text>
+            <TextInput style={styles.input} value={password} onChangeText={setPassword} placeholder="Mínimo 6 caracteres" secureTextEntry />
+
+            <Pressable style={[styles.primaryButton, isRegistering && styles.primaryButtonDisabled]} onPress={() => handleRegister()} disabled={isRegistering}>
+              <Text style={styles.primaryButtonText}>{isRegistering ? 'Procesando en Backend...' : 'Registrarme'}</Text>
             </Pressable>
-            <Pressable onPress={() => navigation.goBack()}>
+
+            {/* Botones de demostración rápida para la exposición */}
+            <View style={styles.demoBox}>
+              <Text style={styles.demoBoxTitle}>🧪 Probar Respuestas HTTP del Backend:</Text>
+              <View style={styles.demoButtonsRow}>
+                <Pressable
+                  style={styles.demoButton}
+                  onPress={() => handleRegister({ razonSocial: '', rif: 'FORMATO_INVALIDO', email: 'correo_malo', password: '12' })}
+                >
+                  <Text style={styles.demoButtonText}>Error 400 Bad Request</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.demoButton}
+                  onPress={() => handleRegister({ razonSocial: 'Empresa Demo C.A.', rif: 'J-12345678-0', email: 'demo@empresa.com', password: 'Password123!' })}
+                >
+                  <Text style={styles.demoButtonText}>Error 409 Conflict</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.demoButton}
+                  onPress={() => handleRegister({ razonSocial: 'Fallo Crítico C.A.', rif: 'J-99999999-9', email: 'trigger500@error.com', password: 'Password123!' })}
+                >
+                  <Text style={styles.demoButtonText}>Error 500 Server Error</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <Pressable onPress={() => { setServerError(null); navigation.goBack(); }}>
               <Text style={styles.footerLink}>Ya tengo una cuenta</Text>
             </Pressable>
           </View>
@@ -794,6 +871,80 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  serverErrorBox: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderColor: '#ef4444',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+  },
+  serverErrorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  serverErrorBadge: {
+    backgroundColor: '#ef4444',
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 11,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+    letterSpacing: 0.5,
+  },
+  serverErrorType: {
+    color: '#fca5a5',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  serverErrorMessage: {
+    color: '#fee2e2',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  serverErrorTrace: {
+    color: '#f87171',
+    fontFamily: 'monospace',
+    fontSize: 10,
+    marginTop: 6,
+  },
+  demoBox: {
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+  },
+  demoBoxTitle: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  demoButtonsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  demoButton: {
+    backgroundColor: '#1e293b',
+    borderColor: '#334155',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  demoButtonText: {
+    color: '#93c5fd',
+    fontSize: 10,
+    fontWeight: '600',
+  },
   screen: { flex: 1, backgroundColor: '#020817' },
   keyboardView: { flex: 1 },
   contentCenter: { flexGrow: 1, justifyContent: 'center', padding: 24, backgroundColor: '#020817' },
